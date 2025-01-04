@@ -13,6 +13,8 @@ class SAC(object):
         self.tau = args.tau
         self.alpha = args.alpha
 
+        self.actor_update_steps = args.actor_update_steps
+
         self.policy_type = args.policy
         self.target_update_interval = args.target_update_interval
         self.automatic_entropy_tuning = args.automatic_entropy_tuning
@@ -79,34 +81,43 @@ class SAC(object):
 
         self.critic_optim.step()
 
-        pi, log_pi, _ = self.policy.sample(state_batch)
+        for i in range(self.actor_update_steps):
 
-        qf1_pi, qf2_pi = self.critic(state_batch, pi)
-        min_qf_pi = torch.min(qf1_pi, qf2_pi)
+            for param in self.critic.parameters():
+                param.requires_grad = False
 
-        policy_loss = ((self.alpha * log_pi) - min_qf_pi).mean() # Jπ = 𝔼st∼D,εt∼N[α * logπ(f(εt;st)|st) − Q(st,f(εt;st))]
+            pi, log_pi, _ = self.policy.sample(state_batch)
 
-        self.policy_optim.zero_grad()
-        policy_loss.backward()
+            qf1_pi, qf2_pi = self.critic(state_batch, pi)
+            min_qf_pi = torch.min(qf1_pi, qf2_pi)
+
+            policy_loss = ((self.alpha * log_pi) - min_qf_pi).mean() # Jπ = 𝔼st∼D,εt∼N[α * logπ(f(εt;st)|st) − Q(st,f(εt;st))]
+
+            self.policy_optim.zero_grad()
+            policy_loss.backward()
 
 
-        actor_grad_norms = nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=1e20, norm_type=2)
-    
+            actor_grad_norms = nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=1e20, norm_type=2)
+        
 
-        self.policy_optim.step()
+            self.policy_optim.step()
 
-        if self.automatic_entropy_tuning:
-            alpha_loss = -(self.log_alpha * (log_pi + self.target_entropy).detach()).mean()
+            if self.automatic_entropy_tuning:
+                alpha_loss = -(self.log_alpha * (log_pi + self.target_entropy).detach()).mean()
 
-            self.alpha_optim.zero_grad()
-            alpha_loss.backward()
-            self.alpha_optim.step()
+                self.alpha_optim.zero_grad()
+                alpha_loss.backward()
+                self.alpha_optim.step()
 
-            self.alpha = self.log_alpha.exp()
-            alpha_tlogs = self.alpha.clone() # For TensorboardX logs
-        else:
-            alpha_loss = torch.tensor(0.).to(self.device)
-            alpha_tlogs = torch.tensor(self.alpha) # For TensorboardX logs
+                self.alpha = self.log_alpha.exp()
+                alpha_tlogs = self.alpha.clone() # For TensorboardX logs
+            else:
+                alpha_loss = torch.tensor(0.).to(self.device)
+                alpha_tlogs = torch.tensor(self.alpha) # For TensorboardX logs
+            
+            for param in self.critic.parameters():
+                param.requires_grad = True
+                
 
 
         if updates % self.target_update_interval == 0:
